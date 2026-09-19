@@ -28,6 +28,9 @@ class RelayService:
             with urllib.request.urlopen(request, timeout=5) as response:
                 if response.status >= 400:
                     error = f"downstream status {response.status}"
+        except urllib.error.HTTPError as exc:
+            error = str(exc)
+            exc.close()
         except (urllib.error.URLError, TimeoutError) as exc:
             error = str(exc)
         status, next_at = outcome(attempts, self.settings.max_attempts, self.settings.base_backoff_seconds, error)

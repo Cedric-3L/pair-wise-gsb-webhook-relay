@@ -64,3 +64,31 @@ class Store:
         return [(Event(row['event_id'], row['payload'], row['received_at']),
                  Delivery(row['event_id'], row['status'], row['attempts'], row['next_attempt_at'], row['last_error']))
                 for row in rows]
+
+    def claim_due(self, limit: int, now: str | None = None) -> list[tuple[Event, Delivery]]:
+        now = now or utc_now()
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute("""
+                SELECT e.*, d.status, d.attempts, d.next_attempt_at, d.last_error
+                FROM events e JOIN deliveries d ON d.event_id=e.event_id
+                WHERE d.status='pending' AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= ?)
+                ORDER BY e.received_at
+                LIMIT ?
+            """, (now, limit)).fetchall()
+            conn.executemany(
+                "UPDATE deliveries SET status='claimed' WHERE event_id=? AND status='pending'",
+                [(row['event_id'],) for row in rows],
+            )
+        return [(Event(row['event_id'], row['payload'], row['received_at']),
+                 Delivery(row['event_id'], row['status'], row['attempts'], row['next_attempt_at'], row['last_error']))
+                for row in rows]
+
+    def release_claimed(self, event_ids: list[str]) -> None:
+        if not event_ids:
+            return
+        with self.connection() as conn:
+            conn.executemany(
+                "UPDATE deliveries SET status='pending' WHERE event_id=? AND status='claimed'",
+                [(event_id,) for event_id in event_ids],
+            )

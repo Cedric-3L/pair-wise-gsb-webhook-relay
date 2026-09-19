@@ -9,6 +9,8 @@ class Settings:
     database_path: str = "webhook-relay.db"
     max_attempts: int = 4
     base_backoff_seconds: float = 1.0
+    poll_interval_seconds: float = 1.0
+    worker_batch_size: int = 10
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -18,4 +20,6 @@ class Settings:
             database_path=os.getenv("WEBHOOK_DB", cls.database_path),
             max_attempts=int(os.getenv("MAX_ATTEMPTS", cls.max_attempts)),
             base_backoff_seconds=float(os.getenv("BASE_BACKOFF_SECONDS", cls.base_backoff_seconds)),
+            poll_interval_seconds=float(os.getenv("WORKER_POLL_INTERVAL", cls.poll_interval_seconds)),
+            worker_batch_size=int(os.getenv("WORKER_BATCH_SIZE", cls.worker_batch_size)),
         )
