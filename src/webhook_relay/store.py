@@ -1,5 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from .models import Delivery, Event, utc_now
 
 
@@ -61,6 +62,45 @@ class Store:
                 WHERE d.status='pending' AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= ?)
                 ORDER BY e.received_at
             """, (now,)).fetchall()
+        return [(Event(row['event_id'], row['payload'], row['received_at']),
+                 Delivery(row['event_id'], row['status'], row['attempts'], row['next_attempt_at'], row['last_error']))
+                for row in rows]
+
+    def claim_due_deliveries(self, now: str | None = None, limit: int = 10,
+                             lease_seconds: float = 30.0) -> list[tuple[Event, Delivery]]:
+        """Atomically claim due deliveries by moving them to 'in_progress'.
+
+        Uses BEGIN IMMEDIATE so concurrent workers (threads or processes)
+        cannot claim the same delivery. Claimed rows get a lease deadline in
+        next_attempt_at; expired leases become claimable again so a crashed
+        worker cannot strand a delivery forever.
+        """
+        now = now or utc_now()
+        lease_until = (datetime.fromisoformat(now) + timedelta(seconds=lease_seconds)).isoformat()
+        conn = sqlite3.connect(self.path, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute("""
+                SELECT e.event_id, e.payload, e.received_at,
+                       d.status, d.attempts, d.next_attempt_at, d.last_error
+                FROM events e JOIN deliveries d ON d.event_id = e.event_id
+                WHERE (d.status = 'pending' AND (d.next_attempt_at IS NULL OR d.next_attempt_at <= ?))
+                   OR (d.status = 'in_progress' AND d.next_attempt_at IS NOT NULL AND d.next_attempt_at <= ?)
+                ORDER BY e.received_at
+                LIMIT ?
+            """, (now, now, limit)).fetchall()
+            for row in rows:
+                conn.execute(
+                    "UPDATE deliveries SET status='in_progress', next_attempt_at=? WHERE event_id=?",
+                    (lease_until, row["event_id"]),
+                )
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.close()
         return [(Event(row['event_id'], row['payload'], row['received_at']),
                  Delivery(row['event_id'], row['status'], row['attempts'], row['next_attempt_at'], row['last_error']))
                 for row in rows]

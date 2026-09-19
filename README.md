@@ -19,6 +19,20 @@ PYTHONPATH=src python -m webhook_relay.http_server
 
 The server listens on `127.0.0.1:8080` by default. Set `WEBHOOK_SECRET`, `RELAY_TARGET`, and `WEBHOOK_DB` to configure it.
 
+## Delivery worker
+
+```bash
+PYTHONPATH=src python -m webhook_relay.worker --workers 4 --poll-interval 1.0
+```
+
+The worker scans for due pending deliveries, claims them atomically (safe for
+multiple concurrent worker threads or processes against the same SQLite
+database), and delivers them downstream with exponential backoff. Failed
+deliveries are rescheduled until `MAX_ATTEMPTS` is reached, then moved to
+`dead_letter`. Claimed deliveries carry a lease so a crashed worker cannot
+strand them. On `SIGINT`/`SIGTERM` the worker finishes the in-flight delivery
+before exiting.
+
 ## Endpoints
 
 - `POST /webhooks` accepts a JSON object and requires `X-Webhook-Signature`.
